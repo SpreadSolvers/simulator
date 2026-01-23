@@ -56,8 +56,8 @@ const SLOAD_OPCODE: u8 = 0x54;
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
 pub struct SlotWithAddress {
-    address: Address,
-    slot: U256,
+    pub address: Address,
+    pub slot: U256,
 }
 
 #[derive(Default)]
@@ -120,6 +120,7 @@ fn balance_of(
 
     let result = evm.transact_one(tx_env)?;
 
+    //TODO: check reason = return
     let output = match result {
         ExecutionResult::Success { output, .. } => output,
         result => return Err(BalanceOfError::Execution(result)),
@@ -197,12 +198,12 @@ pub fn find_balance_slot(
     token_address: Address,
     user_address: Address,
     rpc_url: Url,
+    alloy_cache_db: &mut AlloyCacheDb,
 ) -> Result<SlotWithAddress, FindSlotError> {
-    let mut alloy_cache_db = create_alloy_db(rpc_url);
+    let inspector = inspect_balance_of(token_address, user_address, alloy_cache_db)?;
 
-    let inspector = inspect_balance_of(token_address, user_address, &mut alloy_cache_db)?;
-
-    let cached_accounts = alloy_cache_db.cache.accounts;
+    //TODO: remove clone
+    let cached_accounts = alloy_cache_db.cache.accounts.clone();
 
     let mut isolated_db = CacheDB::new(EmptyDB::default());
     isolated_db.cache.accounts = cached_accounts; // or use insert methods

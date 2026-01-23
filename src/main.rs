@@ -18,9 +18,9 @@ async fn main() -> anyhow::Result<()> {
     let usdc_holder = address!("0xB166b43B24c2e42A12b2F788Ae0EFA536A914530");
     let empty_address = address!("0x183722431Db2CFb8145C939ab3C6d759bE8CeDDe");
 
-    let slot = find_balance_slot(zro_address, empty_address, rpc_url.clone())?;
+    // let slot = find_balance_slot(zro_address, empty_address, rpc_url.clone())?;
 
-    println!("slot {slot:?}");
+    // println!("slot {slot:?}");
 
     // let zro_slot = find_balance_slot(zro_address, zro_holder_address, rpc_url.clone())?;
     // println!("zro {zro_slot:?}");
