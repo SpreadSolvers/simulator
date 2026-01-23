@@ -2,3 +2,4 @@
 /.claude
 /playground
 /node_modules
+.env
