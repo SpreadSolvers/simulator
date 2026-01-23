@@ -11,7 +11,6 @@ use alloy::{
     transports::{TransportErrorKind, http::reqwest::Url},
 };
 use alloy_json_rpc::RpcError;
-use serde_json::value::RawValue;
 use revm::{
     Context, ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext,
     context::{
@@ -21,6 +20,7 @@ use revm::{
     database::{AlloyDB, Cache, CacheDB, DBTransportError, WrapDatabaseAsync},
     primitives::{Address, Bytes, TxKind, U256},
 };
+use serde_json::value::RawValue;
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -89,13 +89,12 @@ impl Simulator {
         let block_number = BlockId::number(block_number);
 
         let alloy_db = AlloyDB::new(provider, block_number);
-        //TODO: figure out how to check tokio runtime on moment of creation of Simulator
         let alloy_db = WrapDatabaseAsync::new(alloy_db).expect("No Tokio runtime");
+
+        let mut alloy_cache_db = CacheDB::new(alloy_db);
 
         //TODO: bug: if there is second simulation with the same rpc url there will be used
         //not cached state
-        let mut alloy_cache_db = CacheDB::new(alloy_db);
-
         alloy_cache_db.cache = std::mem::take(cache);
 
         let balance_slot = find_balance_slot(params.token_in, params.user, &mut alloy_cache_db)?;

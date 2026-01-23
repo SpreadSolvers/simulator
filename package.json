@@ -4,8 +4,8 @@
 	"types": "index.d.ts",
 	"main": "index.js",
 	"scripts": {
-		"build": "napi build --release",
-		"build:debug": "napi build"
+		"build": "napi build --release ./dist",
+		"build:debug": "napi build ./dist"
 	},
 	"napi": {
 		"name": "simulator",
