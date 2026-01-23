@@ -1,4 +1,5 @@
 mod balance_slot;
+
 use alloy::{sol_types::SolCall, transports::http::reqwest::Url};
 use revm::primitives::address;
 
@@ -18,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let empty_address = address!("0x183722431Db2CFb8145C939ab3C6d759bE8CeDDe");
 
     let slot = find_balance_slot(zro_address, empty_address, rpc_url.clone())?;
+
     println!("slot {slot:?}");
 
     // let zro_slot = find_balance_slot(zro_address, zro_holder_address, rpc_url.clone())?;
