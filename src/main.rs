@@ -13,15 +13,11 @@ use alloy::{
 use anyhow::{Result, anyhow};
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext,
-    bytecode::{bitvec::store, opcode},
-    context::{BlockEnv, CfgEnv, Evm, TxEnv, result::EVMError, tx::TxEnvBuildError},
+    context::{TxEnv, result::EVMError},
     context_interface::result::ExecutionResult,
     database::{AlloyDB, CacheDB, DBTransportError, WrapDatabaseAsync},
-    handler::{EthFrame, EthPrecompiles, instructions::EthInstructions},
-    inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, Interpreter, InterpreterTypes, interpreter::EthInterpreter,
-        interpreter_types::Jumps,
+        CallInputs, CallOutcome, Interpreter, interpreter::EthInterpreter, interpreter_types::Jumps,
     },
     primitives::{HashSet, TxKind, address},
 };
@@ -51,24 +47,6 @@ type AlloyCacheDb = CacheDB<
     >,
 >;
 
-type ContextAlloyDb = Context<BlockEnv, TxEnv, CfgEnv, AlloyCacheDb>;
-#[derive(Default)]
-struct MyInspector {
-    gas_used: u64,
-    call_count: usize,
-}
-
-impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for MyInspector {
-    fn step(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
-        self.gas_used += interp.gas.spent();
-    }
-
-    fn call(&mut self, _context: &mut CTX, _inputs: &mut CallInputs) -> Option<CallOutcome> {
-        self.call_count += 1;
-        None // Don't override the call
-    }
-}
-
 const SLOAD_OPCODE: u8 = 0x54;
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
@@ -84,7 +62,7 @@ struct SloadInspector {
 }
 
 impl<CTX> Inspector<CTX> for SloadInspector {
-    fn step(&mut self, interp: &mut Interpreter<EthInterpreter>, context: &mut CTX) {
+    fn step(&mut self, interp: &mut Interpreter<EthInterpreter>, _: &mut CTX) {
         let opcode = interp.bytecode.opcode();
 
         if opcode != SLOAD_OPCODE {
@@ -92,7 +70,6 @@ impl<CTX> Inspector<CTX> for SloadInspector {
         };
 
         interp.stack.peek(0).ok().inspect(|storage_slot| {
-            // interp.
             self.slots.insert(SlotWithAddress {
                 address: self.current_address,
                 slot: *storage_slot,
@@ -100,19 +77,11 @@ impl<CTX> Inspector<CTX> for SloadInspector {
         });
     }
 
-    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, _: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.current_address = inputs.target_address;
         None
     }
 }
-
-type EvmAlloyDb = Evm<
-    ContextAlloyDb,
-    SloadInspector,
-    EthInstructions<EthInterpreter, ContextAlloyDb>,
-    EthPrecompiles,
-    EthFrame,
->;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -172,7 +141,6 @@ fn balance_of(
 enum BalanceSlotError {
     TxEnvBuildError,
     InspectError(EVMError<DBTransportError>),
-    DBTransportError,
     SlotNotFound,
 }
 
@@ -211,7 +179,7 @@ fn find_balance_slot(
 ) -> Result<SlotWithAddress, BalanceSlotError> {
     let random_value = U256::from(1234567890);
 
-    let inspector = inspect_balance_of(token_address, user_address, cache_db).unwrap();
+    let inspector = inspect_balance_of(token_address, user_address, cache_db)?;
 
     let balance_slot = inspector.slots.iter().find(|slot| {
         let acc = cache_db.load_account(slot.address);
