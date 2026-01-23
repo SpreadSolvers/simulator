@@ -1,4 +1,5 @@
 mod balance_slot;
+mod eth_call_many;
 mod simulator;
 
 use alloy::transports::http::reqwest::Url;

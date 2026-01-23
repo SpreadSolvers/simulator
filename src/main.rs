@@ -22,6 +22,7 @@ async fn main() -> anyhow::Result<()> {
 
     let usdc_address = address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
     let usdc_holder = address!("0xB166b43B24c2e42A12b2F788Ae0EFA536A914530");
+    let empty_address = address!("0x282Cd0c363CCf32629BE74A0A2B1a0Ed6680aE8e");
 
     // Create a client with logging layer
     let client = ClientBuilder::default().http(rpc_url.clone());
@@ -42,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
 
     let start = Instant::now();
 
-    let usdc_slot = find_balance_slot(usdc_address, usdc_holder, &mut alloy_cache_db)?;
+    let usdc_slot = find_balance_slot(usdc_address, empty_address, &mut alloy_cache_db)?;
 
     println!("USDC slot: {usdc_slot:?}");
     println!("time taken: {:?}", start.elapsed());
