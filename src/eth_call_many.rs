@@ -125,13 +125,34 @@ pub enum TransactionResponse {
     /// Successful transaction with return value
     Success {
         /// The return value of the transaction, hex encoded
-        value: String,
+        #[serde(with = "hex_bytes")]
+        value: Bytes,
     },
     /// Failed transaction with error message
     Error {
         /// Error message if the transaction failed
         error: String,
     },
+}
+
+mod hex_bytes {
+    use alloy::primitives::Bytes;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&bytes.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
 }
 
 /// Simulation context specifying where to execute the simulation
@@ -155,6 +176,7 @@ pub struct EthCallMany<'a> {
 #[error("call many failed")]
 pub enum EthCallManyError {
     Serialization(#[from] serde_json::Error),
+    //TODO: check what is Box<RawValue>
     Rpc(#[from] RpcError<TransportErrorKind, Box<RawValue>>),
 }
 
@@ -293,7 +315,7 @@ mod tests {
         match tx_response {
             TransactionResponse::Success { value } => {
                 // ERC20 transfer returns bool (true = 1)
-                let expected = "0x0000000000000000000000000000000000000000000000000000000000000001";
+                let expected: Bytes = "0x0000000000000000000000000000000000000000000000000000000000000001".parse().unwrap();
                 assert_eq!(value, expected, "Transfer should return true");
                 println!("Transaction succeeded with return value: {}", value);
             }

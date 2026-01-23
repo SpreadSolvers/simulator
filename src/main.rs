@@ -18,6 +18,7 @@ use crate::balance_slot::find_balance_slot;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let rpc_url: Url = "https://rpc.flashbots.net".parse()?;
+    let rpc_url: Url = "http://127.0.0.1:8545".parse()?;
     // let rpc_url: Url = "https://rrpc.flashbots.net".parse()?;
 
     let usdc_address = address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
