@@ -62,7 +62,7 @@ impl Simulator {
         account.storage.insert(balance_slot.slot, amount);
 
         approve(token_in, to, user, &mut alloy_cache_db).unwrap();
-        simulate(to, calldata, user, &mut alloy_cache_db).unwrap();
+        simulate_via_revm(to, calldata, user, &mut alloy_cache_db).unwrap();
 
         // Store the updated cache (including any newly fetched contract code)
         *cache = alloy_cache_db.cache;
@@ -114,7 +114,7 @@ fn approve(
     Ok(())
 }
 
-fn simulate(
+fn simulate_via_revm(
     to: Address,
     calldata: Bytes,
     user: Address,
