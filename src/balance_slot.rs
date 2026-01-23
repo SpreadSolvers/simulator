@@ -251,10 +251,7 @@ fn test_slot(
 ) -> Result<U256, TestSlotError> {
     let acc = cache_db.load_account(slot_with_address.address)?;
 
-    let original_value = match acc.storage.get(&slot_with_address.slot) {
-        Some(original_value) => Some(original_value.clone()),
-        None => None,
-    };
+    let original_value = acc.storage.get(&slot_with_address.slot).copied();
 
     acc.storage.insert(slot_with_address.slot, TARGET_VALUE);
 
