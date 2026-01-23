@@ -29,35 +29,53 @@ use crate::balance_slot::{AlloyCacheDb, IERC20::approveCall, SlotWithAddress, fi
 pub struct SimulationParams {
     pub user: Address,
     pub token_in: Address,
+    pub amount_in: U256,
     pub to: Address,
     pub calldata: Bytes,
-    pub amount_in: U256,
 }
 
 pub struct Simulator {
     db_caches: HashMap<u32, Cache>,
 }
 
-pub enum RpcTransactionResult {
+pub enum TransactionResult {
     Success(Bytes),
-    Revert(String),
+    Failed(String),
 }
 
-pub enum RevmTransactionResult {
-    Success(Bytes),
-    Failed(ExecutionResult),
+type SimulationResult = Result<Bytes, String>;
+
+pub struct SimulationOutput {
+    pub result: SimulationResult,
+    pub simulation_via_rpc_err: Option<SimulateViaRpcError>,
 }
 
-pub enum SimulationResult {
-    Rpc(RpcTransactionResult),
-    RpcFailedButRevm {
-        rpc_error: SimulateViaRpcError,
-        revm_result: RevmTransactionResult,
-    },
-    BothFailed {
-        rpc_error: SimulateViaRpcError,
-        revm_error: SimulateViaRevmError,
-    },
+#[derive(Debug)]
+pub struct BothSimulationsFailed {
+    pub rpc_error: SimulateViaRpcError,
+    pub revm_error: SimulateViaRevmError,
+}
+
+impl std::fmt::Display for BothSimulationsFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "both RPC and REVM simulations failed")?;
+
+        // Format RPC error chain (REVM chain will be handled by source())
+        write!(f, "\n  RPC error: {}", self.rpc_error)?;
+        let mut rpc_source = std::error::Error::source(&self.rpc_error);
+        while let Some(source) = rpc_source {
+            write!(f, "\n    caused by: {}", source)?;
+            rpc_source = std::error::Error::source(source);
+        }
+
+        Ok(())
+    }
+}
+
+impl std::error::Error for BothSimulationsFailed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.revm_error)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -66,6 +84,8 @@ pub enum SimulateError {
     FindSlot(#[from] FindSlotError),
     #[error("RPC error while getting block number")]
     Rpc(#[from] RpcError<TransportErrorKind>),
+    #[error(transparent)]
+    BothSimulationsFailed(#[from] BothSimulationsFailed),
 }
 
 impl Simulator {
@@ -80,7 +100,7 @@ impl Simulator {
         chain_id: u32,
         rpc_url: Url,
         params: SimulationParams,
-    ) -> Result<SimulationResult, SimulateError> {
+    ) -> Result<SimulationOutput, SimulateError> {
         let cache = self.db_caches.entry(chain_id).or_default();
 
         let provider = ProviderBuilder::new().connect_http(rpc_url.clone());
@@ -99,19 +119,26 @@ impl Simulator {
 
         let balance_slot = find_balance_slot(params.token_in, params.user, &mut alloy_cache_db)?;
 
-        let result = match simulate_via_rpc(&params, rpc_url, &balance_slot).await {
-            Ok(rpc_result) => SimulationResult::Rpc(rpc_result),
-            Err(rpc_error) => match simulate_via_revm(&params, &mut alloy_cache_db, balance_slot) {
-                Ok(revm_result) => SimulationResult::RpcFailedButRevm {
-                    rpc_error,
-                    revm_result,
-                },
-                Err(revm_error) => SimulationResult::BothFailed {
-                    rpc_error,
-                    revm_error,
-                },
-            },
-        };
+        let result: Result<SimulationOutput, SimulateError> =
+            match simulate_via_rpc(&params, rpc_url, &balance_slot).await {
+                Ok(rpc_result) => Ok(SimulationOutput {
+                    result: rpc_result,
+                    simulation_via_rpc_err: None,
+                }),
+                Err(rpc_error) => {
+                    match simulate_via_revm(&params, &mut alloy_cache_db, balance_slot) {
+                        Ok(revm_result) => Ok(SimulationOutput {
+                            result: revm_result,
+                            simulation_via_rpc_err: Some(rpc_error),
+                        }),
+                        Err(revm_error) => Err(BothSimulationsFailed {
+                            rpc_error,
+                            revm_error,
+                        }
+                        .into()),
+                    }
+                }
+            };
 
         *cache = alloy_cache_db.cache;
 
@@ -119,7 +146,7 @@ impl Simulator {
             db_account.storage.clear();
         });
 
-        Ok(result)
+        result
     }
 }
 
@@ -190,7 +217,7 @@ fn simulate_via_revm(
     params: &SimulationParams,
     alloy_cache_db: &mut AlloyCacheDb,
     balance_slot: SlotWithAddress,
-) -> Result<RevmTransactionResult, SimulateViaRevmError> {
+) -> Result<SimulationResult, SimulateViaRevmError> {
     let account = alloy_cache_db.load_account(balance_slot.address)?;
     account.storage.insert(balance_slot.slot, params.amount_in);
 
@@ -214,8 +241,8 @@ fn simulate_via_revm(
             reason: SuccessReason::Return,
             output,
             ..
-        } => Ok(RevmTransactionResult::Success(output.into_data())),
-        failed => Ok(RevmTransactionResult::Failed(failed)),
+        } => Ok(Ok(output.into_data())),
+        failed => Ok(Err(format!("{:?}", failed))),
     }
 }
 
@@ -223,7 +250,7 @@ async fn simulate_via_rpc(
     params: &SimulationParams,
     rpc_url: Url,
     balance_slot: &SlotWithAddress,
-) -> Result<RpcTransactionResult, SimulateViaRpcError> {
+) -> Result<SimulationResult, SimulateViaRpcError> {
     let client = alloy_rpc_client::RpcClient::new_http(rpc_url);
     let eth_call_many = EthCallMany::new(&client);
 
@@ -285,13 +312,13 @@ async fn simulate_via_rpc(
             TransactionResponse::Success { value, .. } => {
                 if idx == 1 {
                     // Return the output from the second transaction (the actual call)
-                    return Ok(RpcTransactionResult::Success(value.clone()));
+                    return Ok(Ok(value.clone()));
                 }
             }
             TransactionResponse::Error { error } => {
                 if idx == 1 {
                     // The main transaction reverted
-                    return Ok(RpcTransactionResult::Revert(error.clone()));
+                    return Ok(Err(error.clone()));
                 } else {
                     // Approve transaction failed - this is an error
                     return Err(SimulateViaRpcError::ApproveFailed(error.clone()));

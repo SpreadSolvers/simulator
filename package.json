@@ -4,14 +4,14 @@
 	"types": "index.d.ts",
 	"main": "index.js",
 	"scripts": {
-		"build": "napi build --release ./dist",
-		"build:debug": "napi build ./dist"
+		"build": "napi build --release --output-dir ./dist",
+		"build:debug": "napi build --output-dir ./dist"
 	},
 	"napi": {
-		"name": "simulator",
+		"binaryName": "simulator",
 		"triples": {}
 	},
 	"devDependencies": {
-		"@napi-rs/cli": "^2.18.0"
+		"@napi-rs/cli": "^3.5.1"
 	}
 }
