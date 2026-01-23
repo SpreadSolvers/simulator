@@ -1,14 +1,12 @@
 use alloy::{
-    eips::BlockId,
     network::Ethereum,
     primitives::{Address, U256},
     providers::{
-        Identity, ProviderBuilder, RootProvider,
+        Identity, RootProvider,
         fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
     },
     sol,
     sol_types::{SolCall, SolValue},
-    transports::http::reqwest::Url,
 };
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext,
@@ -211,15 +209,6 @@ pub fn find_balance_slot(
         find_slot_by_mutation(user_address, token_address, &inspector, &mut isolated_db)?;
 
     Ok(slot_with_address)
-}
-
-fn create_alloy_db(rpc_url: Url) -> AlloyCacheDb {
-    let provider = ProviderBuilder::new().connect_http(rpc_url);
-
-    let alloy_db = WrapDatabaseAsync::new(AlloyDB::new(provider, BlockId::latest()))
-        .expect("No Tokio runtime");
-
-    CacheDB::new(alloy_db)
 }
 
 const TARGET_VALUE: U256 = U256::from_limbs([1234567890, 0, 0, 0]);

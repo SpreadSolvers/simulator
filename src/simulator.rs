@@ -20,7 +20,6 @@ use revm::{
     database::{AlloyDB, Cache, CacheDB, DBTransportError, WrapDatabaseAsync},
     primitives::{Address, Bytes, TxKind, U256},
 };
-use serde_json::value::RawValue;
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -36,11 +35,6 @@ pub struct SimulationParams {
 
 pub struct Simulator {
     db_caches: HashMap<u32, Cache>,
-}
-
-pub enum TransactionResult {
-    Success(Bytes),
-    Failed(String),
 }
 
 type SimulationResult = Result<Bytes, String>;
@@ -113,8 +107,6 @@ impl Simulator {
 
         let mut alloy_cache_db = CacheDB::new(alloy_db);
 
-        //TODO: bug: if there is second simulation with the same rpc url there will be used
-        //not cached state
         alloy_cache_db.cache = std::mem::take(cache);
 
         let balance_slot = find_balance_slot(params.token_in, params.user, &mut alloy_cache_db)?;
@@ -152,7 +144,7 @@ impl Simulator {
 
 #[derive(Debug, Error)]
 #[error("simulation via revm failed")]
-enum ApproveError {
+pub enum ApproveError {
     LoadAccount(#[from] DBTransportError),
     Transact(#[from] EVMError<DBTransportError>),
     #[error("execution failed: {0:?}")]
@@ -165,24 +157,13 @@ fn approve(
     user: Address,
     alloy_cache_db: &mut AlloyCacheDb,
 ) -> Result<(), ApproveError> {
-    let encoded = approveCall {
-        spender,
-        value: U256::MAX,
-    }
-    .abi_encode();
+    let calldata = get_approve_max_calldata(spender);
 
-    let nonce = alloy_cache_db.load_account(user)?.info.nonce;
-
-    let approve_tx_env = TxEnv::builder()
-        .kind(TxKind::Call(token))
-        .data(encoded.into())
-        .caller(user)
-        .nonce(nonce)
-        .build_fill();
+    let tx_env = build_tx_env(alloy_cache_db, user, token, calldata)?;
 
     let mut evm = Context::mainnet().with_db(alloy_cache_db).build_mainnet();
 
-    let approve_res = evm.transact_commit(approve_tx_env)?;
+    let approve_res = evm.transact_commit(tx_env)?;
 
     match approve_res {
         ExecutionResult::Success {
@@ -191,6 +172,16 @@ fn approve(
         } => Ok(()),
         failed => Err(ApproveError::Execution(failed)),
     }
+}
+
+fn get_approve_max_calldata(spender: Address) -> Bytes {
+    let encoded = approveCall {
+        spender,
+        value: U256::MAX,
+    }
+    .abi_encode();
+
+    encoded.into()
 }
 
 #[derive(Debug, Error)]
@@ -208,8 +199,6 @@ pub enum SimulateViaRpcError {
 pub enum SimulateViaRevmError {
     LoadAccount(#[from] DBTransportError),
     Approve(#[from] ApproveError),
-    #[error("execution failed: {0:?}")]
-    Execution(ExecutionResult),
     Transact(#[from] EVMError<DBTransportError>),
 }
 
@@ -223,16 +212,14 @@ fn simulate_via_revm(
 
     approve(params.token_in, params.to, params.user, alloy_cache_db)?;
 
-    let nonce = alloy_cache_db.load_account(params.user)?.info.nonce;
+    let tx_env = build_tx_env(
+        alloy_cache_db,
+        params.user,
+        params.to,
+        params.calldata.clone(),
+    )?;
 
     let mut evm = Context::mainnet().with_db(alloy_cache_db).build_mainnet();
-
-    let tx_env = TxEnv::builder()
-        .kind(TxKind::Call(params.to))
-        .data(params.calldata.clone())
-        .caller(params.user)
-        .nonce(nonce)
-        .build_fill();
 
     let res = evm.transact_one(tx_env)?;
 
@@ -244,6 +231,24 @@ fn simulate_via_revm(
         } => Ok(Ok(output.into_data())),
         failed => Ok(Err(format!("{:?}", failed))),
     }
+}
+
+fn build_tx_env(
+    alloy_cache_db: &mut AlloyCacheDb,
+    from: Address,
+    to: Address,
+    calldata: Bytes,
+) -> Result<TxEnv, DBTransportError> {
+    let nonce = alloy_cache_db.load_account(from)?.info.nonce;
+
+    let tx_env = TxEnv::builder()
+        .kind(TxKind::Call(to))
+        .data(calldata)
+        .caller(from)
+        .nonce(nonce)
+        .build_fill();
+
+    Ok(tx_env)
 }
 
 async fn simulate_via_rpc(
@@ -265,17 +270,12 @@ async fn simulate_via_rpc(
     let mut state_overrides = HashMap::new();
     state_overrides.insert(params.token_in, state_override);
 
-    let approve_data = approveCall {
-        spender: params.to,
-        value: U256::MAX,
-    }
-    .abi_encode()
-    .into();
+    let approve_calldata = get_approve_max_calldata(params.to);
 
     let approve_tx = Transaction {
         from: Some(params.user),
         to: Some(params.token_in),
-        data: Some(approve_data),
+        data: Some(approve_calldata),
         ..Default::default()
     };
 
