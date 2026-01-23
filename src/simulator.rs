@@ -107,6 +107,7 @@ impl Simulator {
 
         let mut alloy_cache_db = CacheDB::new(alloy_db);
 
+        //TODO: RAII bug?
         alloy_cache_db.cache = std::mem::take(cache);
 
         let balance_slot = find_balance_slot(params.token_in, params.user, &mut alloy_cache_db)?;
