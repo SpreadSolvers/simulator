@@ -9,12 +9,16 @@ use std::str::FromStr;
 
 use crate::simulator::{SimulationParams as SimulationParamsInternal, Simulator as SimulatorImpl};
 
+const STATUS_SUCCESS: &str = "simulation_success";
+const STATUS_FAILED: &str = "simulation_failed";
+const STATUS_ERROR: &str = "error";
+
 fn parse_or_error<T: FromStr>(value: &str, field_name: &str) -> Result<T, Error>
 where
     T::Err: std::fmt::Display,
 {
     value.parse().map_err(|e| Error {
-        status: "error".to_string(),
+        status: STATUS_ERROR.to_string(),
         error: format!("Invalid {}: {}", field_name, e),
     })
 }
@@ -53,7 +57,7 @@ impl TryFrom<SimulationParams> for SimulationParamsInternal {
 
 #[napi(object)]
 pub struct SimulationSuccess {
-    #[napi(ts_type = "'simulation_success'")]
+    #[napi(ts_type = STATUS_SUCCESS)]
     pub status: String,
     pub output: String,
     pub rpc_err: Option<String>,
@@ -61,7 +65,7 @@ pub struct SimulationSuccess {
 
 #[napi(object)]
 pub struct SimulationFailed {
-    #[napi(ts_type = "'simulation_failed'")]
+    #[napi(ts_type = STATUS_FAILED)]
     pub status: String,
     pub output: String,
     pub rpc_err: Option<String>,
@@ -69,7 +73,7 @@ pub struct SimulationFailed {
 
 #[napi(object)]
 pub struct Error {
-    #[napi(ts_type = "'error'")]
+    #[napi(ts_type = STATUS_ERROR)]
     pub status: String,
     pub error: String,
 }
@@ -112,7 +116,7 @@ impl Simulator {
             Ok(output) => output,
             Err(e) => {
                 return Ok(Either3::C(Error {
-                    status: "error".to_string(),
+                    status: STATUS_ERROR.to_string(),
                     error: format!("{:#}", anyhow::Error::from(e)),
                 }));
             }
@@ -124,12 +128,12 @@ impl Simulator {
 
         let ts_result = match output.result {
             Ok(bytes) => Either3::A(SimulationSuccess {
-                status: "simulation_success".to_string(),
+                status: STATUS_SUCCESS.to_string(),
                 output: bytes.to_string(),
                 rpc_err,
             }),
             Err(reason) => Either3::B(SimulationFailed {
-                status: "simulation_failed".to_string(),
+                status: STATUS_FAILED.to_string(),
                 output: reason,
                 rpc_err,
             }),

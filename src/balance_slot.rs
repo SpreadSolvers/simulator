@@ -203,7 +203,7 @@ pub fn find_balance_slot(
     let cached_accounts = alloy_cache_db.cache.accounts.clone();
 
     let mut isolated_db = CacheDB::new(EmptyDB::default());
-    isolated_db.cache.accounts = cached_accounts; // or use insert methods
+    isolated_db.cache.accounts = cached_accounts;
 
     let slot_with_address =
         find_slot_by_mutation(user_address, token_address, &inspector, &mut isolated_db)?;
