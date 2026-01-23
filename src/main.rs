@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use alloy::{
     eips::BlockId,
     network::Ethereum,
@@ -10,17 +12,17 @@ use alloy::{
     sol_types::{SolCall, SolValue},
     transports::http::reqwest::Url,
 };
-use anyhow::{Result, anyhow};
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext,
-    context::{TxEnv, result::EVMError},
+    context::{TxEnv, result::EVMError, tx::TxEnvBuildError},
     context_interface::result::ExecutionResult,
-    database::{AlloyDB, CacheDB, DBTransportError, WrapDatabaseAsync},
+    database::{AlloyDB, CacheDB, DBTransportError, EmptyDB, WrapDatabaseAsync},
     interpreter::{
         CallInputs, CallOutcome, Interpreter, interpreter::EthInterpreter, interpreter_types::Jumps,
     },
     primitives::{HashSet, TxKind, address},
 };
+use thiserror::Error;
 
 use crate::IERC20::balanceOfCall;
 
@@ -84,52 +86,60 @@ impl<CTX> Inspector<CTX> for SloadInspector {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     let rpc_url: Url = "https://eth.drpc.org".parse()?;
-    let provider = ProviderBuilder::new().connect_http(rpc_url);
-
-    let alloy_db = WrapDatabaseAsync::new(AlloyDB::new(provider, BlockId::latest()))
-        .expect("No Tokio runtime");
-
-    let mut cache_db = CacheDB::new(alloy_db);
+    let rpc_url: Url = "https://ethereum-rpc.publicnode.com".parse()?;
+    let rpc_url: Url = "https://rpc.flashbots.net".parse()?;
 
     let zro_address = address!("0x6985884C4392D348587B19cb9eAAf157F13271cd");
     let zro_holder_address = address!("0x1d4A12A09C293b816BFF3625abdA3Ae07dee19F5");
     let usdc_address = address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
     let usdc_holder = address!("0xB166b43B24c2e42A12b2F788Ae0EFA536A914530");
 
-    let zro_slot = find_balance_slot(zro_address, zro_holder_address, &mut cache_db);
-    let usdc_slot = find_balance_slot(usdc_address, usdc_holder, &mut cache_db);
-
+    let zro_slot = find_balance_slot(zro_address, zro_holder_address, rpc_url.clone())?;
     println!("zro {zro_slot:?}");
+
+    let usdc_slot = find_balance_slot(usdc_address, usdc_holder, rpc_url.clone())?;
     println!("usdc {usdc_slot:?}");
 
     Ok(())
 }
 
+#[derive(Debug, Error)]
+#[error("getting balance failed")]
+enum BalanceOfError {
+    TxBuild(TxEnvBuildError),
+    TransactOne(#[from] EVMError<Infallible>),
+    Execution(ExecutionResult),
+    Decoding(#[from] alloy::sol_types::Error),
+}
+
+impl From<TxEnvBuildError> for BalanceOfError {
+    fn from(value: TxEnvBuildError) -> Self {
+        BalanceOfError::TxBuild(value)
+    }
+}
+
+impl From<ExecutionResult> for BalanceOfError {
+    fn from(value: ExecutionResult) -> Self {
+        BalanceOfError::Execution(value)
+    }
+}
+
 fn balance_of(
     user_address: Address,
     token_address: Address,
-    cache_db: &mut AlloyCacheDb,
-) -> Result<U256> {
+    cache_db: &mut CacheDB<EmptyDB>,
+) -> Result<U256, BalanceOfError> {
     let mut evm = Context::mainnet().with_db(cache_db).build_mainnet();
 
-    let encoded = balanceOfCall {
-        account: user_address,
-    }
-    .abi_encode();
+    let tx_env = build_balance_of_tx_env(token_address, user_address)?;
 
-    let result = evm.transact_one(
-        TxEnv::builder()
-            .kind(TxKind::Call(token_address))
-            .data(encoded.into())
-            .build()
-            .expect("error building"),
-    )?;
+    let result = evm.transact_one(tx_env)?;
 
     let output = match result {
         ExecutionResult::Success { output, .. } => output,
-        result => return Err(anyhow!("balanceOf call failed, reason {result:?}")),
+        result => return Err(BalanceOfError::Execution(result)),
     };
 
     let balance = U256::abi_decode(output.data())?;
@@ -137,89 +147,151 @@ fn balance_of(
     Ok(balance)
 }
 
-#[derive(Debug)]
-enum BalanceSlotError {
-    TxEnvBuildError,
-    InspectError(EVMError<DBTransportError>),
-    SlotNotFound,
+#[derive(Debug, Error)]
+#[error("finding balance slot failed")]
+enum FindSlotError {
+    FindSlotByMutation(#[from] FindSlotByMutationError),
+    InspectBalanceOf(#[from] InspectBalanceOfError),
+}
+
+#[derive(Debug, Error)]
+#[error("inspecting balanceOf call failed")]
+enum InspectBalanceOfError {
+    TxBuild(TxEnvBuildError),
+    InspectError(#[from] EVMError<DBTransportError>),
+}
+
+impl From<TxEnvBuildError> for InspectBalanceOfError {
+    fn from(value: TxEnvBuildError) -> Self {
+        InspectBalanceOfError::TxBuild(value)
+    }
 }
 
 fn inspect_balance_of(
     token_address: Address,
     user_address: Address,
     cache_db: &mut AlloyCacheDb,
-) -> Result<SloadInspector, BalanceSlotError> {
+) -> Result<SloadInspector, InspectBalanceOfError> {
     let inspector = SloadInspector::default();
 
     let mut evm = Context::mainnet()
         .with_db(cache_db)
         .build_mainnet_with_inspector(inspector);
 
+    let tx = build_balance_of_tx_env(token_address, user_address)?;
+
+    evm.inspect_one_tx(tx)?;
+
+    Ok(evm.inspector)
+}
+
+fn build_balance_of_tx_env(
+    token_address: Address,
+    user_address: Address,
+) -> Result<TxEnv, TxEnvBuildError> {
     let encoded = balanceOfCall {
         account: user_address,
     }
     .abi_encode();
 
-    let tx = TxEnv::builder()
+    let tx_env = TxEnv::builder()
         .kind(TxKind::Call(token_address))
         .data(encoded.into())
-        .build()
-        .map_err(|_| BalanceSlotError::TxEnvBuildError)?;
+        .build()?;
 
-    evm.inspect_one_tx(tx)
-        .map_err(|err| BalanceSlotError::InspectError(err))?;
-
-    Ok(evm.inspector)
+    Ok(tx_env)
 }
 
 fn find_balance_slot(
     token_address: Address,
     user_address: Address,
-    cache_db: &mut AlloyCacheDb,
-) -> Result<SlotWithAddress, BalanceSlotError> {
-    let random_value = U256::from(1234567890);
+    rpc_url: Url,
+) -> Result<SlotWithAddress, FindSlotError> {
+    let mut alloy_cache_db = create_alloy_db(rpc_url);
 
-    let inspector = inspect_balance_of(token_address, user_address, cache_db)?;
+    let inspector = inspect_balance_of(token_address, user_address, &mut alloy_cache_db)?;
 
-    let balance_slot = inspector.slots.iter().find(|slot| {
-        let acc = cache_db.load_account(slot.address);
+    let cached_accounts = alloy_cache_db.cache.accounts;
 
-        let Ok(acc) = acc else {
-            return false;
-        };
+    let mut isolated_db = CacheDB::new(EmptyDB::default());
+    isolated_db.cache.accounts = cached_accounts; // or use insert methods
 
-        let original_value = acc.storage.get(&slot.slot);
+    let slot_with_address =
+        find_slot_by_mutation(user_address, token_address, &inspector, &mut isolated_db)?;
 
-        let Some(original_value) = original_value else {
-            return false;
-        };
-        let original_value = original_value.clone();
+    Ok(slot_with_address)
+}
 
-        acc.storage.insert(slot.slot, random_value);
+fn create_alloy_db(rpc_url: Url) -> AlloyCacheDb {
+    let provider = ProviderBuilder::new().connect_http(rpc_url);
 
-        let new_balance = balance_of(user_address, token_address, cache_db);
+    let alloy_db = WrapDatabaseAsync::new(AlloyDB::new(provider, BlockId::latest()))
+        .expect("No Tokio runtime");
 
-        let Ok(new_balance) = new_balance else {
-            return false;
-        };
+    CacheDB::new(alloy_db)
+}
 
-        let acc = cache_db.load_account(slot.address);
+const TARGET_VALUE: U256 = U256::from_limbs([1234567890, 0, 0, 0]);
 
-        let Ok(acc) = acc else {
-            return false;
-        };
+#[derive(Debug, Error)]
+#[error("finding slot by mutation failed")]
+struct FindSlotByMutationError;
 
-        acc.storage.insert(slot.slot, original_value);
+fn find_slot_by_mutation(
+    user_address: Address,
+    token_address: Address,
+    inspector: &SloadInspector,
+    cache_db: &mut CacheDB<EmptyDB>,
+) -> Result<SlotWithAddress, FindSlotByMutationError> {
+    for slot_with_address in inspector.slots.iter() {
+        let new_balance = test_slot(user_address, token_address, slot_with_address, cache_db);
 
-        if new_balance == random_value {
-            return true;
+        if let Ok(new_balance) = new_balance {
+            if new_balance == TARGET_VALUE {
+                return Ok(slot_with_address.clone());
+            }
         }
-
-        return false;
-    });
-
-    match balance_slot {
-        Some(balance_slot) => Ok(balance_slot.clone()),
-        None => Err(BalanceSlotError::SlotNotFound),
     }
+
+    Err(FindSlotByMutationError)
+}
+
+#[derive(Debug, Error)]
+#[error("testing slot failed")]
+enum TestSlotError {
+    BalanceOf(#[from] BalanceOfError),
+    Infallible(#[from] Infallible),
+}
+
+fn test_slot(
+    user_address: Address,
+    token_address: Address,
+    slot_with_address: &SlotWithAddress,
+    cache_db: &mut CacheDB<EmptyDB>,
+) -> Result<U256, TestSlotError> {
+    let acc = cache_db.load_account(slot_with_address.address)?;
+
+    let original_value = match acc.storage.get(&slot_with_address.slot) {
+        Some(original_value) => Some(original_value.clone()),
+        None => None,
+    };
+
+    acc.storage.insert(slot_with_address.slot, TARGET_VALUE);
+
+    let new_balance = balance_of(user_address, token_address, cache_db);
+
+    let acc = cache_db
+        .load_account(slot_with_address.address)
+        .expect("never fail");
+
+    match original_value {
+        Some(original_value) => {
+            acc.storage.insert(slot_with_address.slot, original_value);
+        }
+        None => {
+            acc.storage.remove(&slot_with_address.slot);
+        }
+    }
+
+    Ok(new_balance?)
 }
