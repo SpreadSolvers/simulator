@@ -34,7 +34,7 @@ sol!(
     "artifacts/erc20.sol"
 );
 
-type AlloyCacheDb = CacheDB<
+pub type AlloyCacheDb = CacheDB<
     WrapDatabaseAsync<
         AlloyDB<
             Ethereum,
@@ -197,7 +197,6 @@ fn build_balance_of_tx_env(
 pub fn find_balance_slot(
     token_address: Address,
     user_address: Address,
-    rpc_url: Url,
     alloy_cache_db: &mut AlloyCacheDb,
 ) -> Result<SlotWithAddress, FindSlotError> {
     let inspector = inspect_balance_of(token_address, user_address, alloy_cache_db)?;
