@@ -3729,17 +3729,14 @@ dependencies = [
  "alloy-rpc-client",
  "anyhow",
  "dotenvy",
- "hex",
  "napi",
  "napi-build",
  "napi-derive",
- "pin-project",
  "revm",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
- "tower",
 ]
 
 [[package]]
