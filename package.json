@@ -1,11 +1,10 @@
 {
 	"name": "simulator",
 	"version": "0.1.0",
-	"types": "index.d.ts",
-	"main": "index.js",
 	"scripts": {
-		"build": "napi build --release --output-dir ./dist",
-		"build:debug": "napi build --output-dir ./dist"
+		"build": "napi build --release --output-dir ./dist && npm run postbuild",
+		"build:debug": "napi build --output-dir ./dist && npm run postbuild",
+		"postbuild": "mv dist/index.d.ts dist/simulator.node.d.ts 2>/dev/null || true"
 	},
 	"napi": {
 		"binaryName": "simulator",
