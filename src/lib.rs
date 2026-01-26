@@ -57,7 +57,8 @@ impl TryFrom<SimulationParams> for SimulationParamsInternal {
 
 #[napi(object)]
 pub struct SimulationSuccess {
-    #[napi(ts_type = STATUS_SUCCESS)]
+    //TODO: figure out how to use constants here to avoid multiple status declaration
+    #[napi(ts_type = "\"simulation_success\"")]
     pub status: String,
     pub output: String,
     pub rpc_err: Option<String>,
@@ -65,7 +66,7 @@ pub struct SimulationSuccess {
 
 #[napi(object)]
 pub struct SimulationFailed {
-    #[napi(ts_type = STATUS_FAILED)]
+    #[napi(ts_type = "\"simulation_failed\"")]
     pub status: String,
     pub output: String,
     pub rpc_err: Option<String>,
@@ -73,7 +74,7 @@ pub struct SimulationFailed {
 
 #[napi(object)]
 pub struct Error {
-    #[napi(ts_type = STATUS_ERROR)]
+    #[napi(ts_type = "\"error\"")]
     pub status: String,
     pub error: String,
 }
