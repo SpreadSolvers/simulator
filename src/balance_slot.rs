@@ -112,7 +112,10 @@ fn balance_of(
     token_address: Address,
     cache_db: &mut CacheDB<EmptyDB>,
 ) -> Result<U256, BalanceOfError> {
-    let mut evm = Context::mainnet().with_db(cache_db).build_mainnet();
+    let mut evm = Context::mainnet()
+        .with_db(cache_db)
+        .modify_cfg_chained(|cfg| cfg.disable_nonce_check = true)
+        .build_mainnet();
 
     let tx_env = build_balance_of_tx_env(token_address, user_address)?;
 
@@ -160,6 +163,7 @@ fn inspect_balance_of(
 
     let mut evm = Context::mainnet()
         .with_db(cache_db)
+        .modify_cfg_chained(|cfg| cfg.disable_nonce_check = true)
         .build_mainnet_with_inspector(inspector);
 
     let tx = build_balance_of_tx_env(token_address, user_address)?;
@@ -271,4 +275,43 @@ fn test_slot(
     }
 
     Ok(new_balance?)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy::{
+        eips::BlockId,
+        providers::{Provider, ProviderBuilder},
+    };
+    use revm::primitives::address;
+
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_find_balance_slot() -> Result<(), Box<dyn std::error::Error>> {
+        dotenvy::dotenv().ok();
+        let rpc_url = std::env::var("BASE_RPC")
+            .expect("BASE_RPC not set in .env")
+            .parse()?;
+
+        let provider = ProviderBuilder::new().connect_http(rpc_url);
+
+        let block_number = provider.get_block_number().await?;
+        let block_number = BlockId::number(block_number);
+
+        let alloy_db = AlloyDB::new(provider, block_number);
+        let alloy_db = WrapDatabaseAsync::new(alloy_db).ok_or("No Tokio runtime available")?;
+
+        let mut alloy_cache_db = CacheDB::new(alloy_db);
+
+        let user = address!("0x6698192C6e70186ebE73E2785aC85a8f5B85b052");
+
+        let token = address!("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913");
+
+        let slot = find_balance_slot(token, user, &mut alloy_cache_db)?;
+
+        println!("Found balance slot: {:?}", slot);
+
+        Ok(())
+    }
 }
